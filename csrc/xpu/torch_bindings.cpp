@@ -35,6 +35,13 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   //triple ops
   ops.def("silu_and_mul(Tensor! out, Tensor! input) -> ()");
   ops.impl("silu_and_mul", torch::kXPU, &silu_and_mul);
+
+  //pos_embedding
+  ops.def(
+      "rotary_embedding(Tensor positions, Tensor! query,"
+      "                 Tensor!? key, int head_size,"
+      "                 Tensor cos_sin_cache, bool is_neox) -> ()");
+  ops.impl("rotary_embedding", torch::kXPU, &rotary_embedding);
 }
 
 REGISTER_EXTENSION(TORCH_EXTENSION_NAME)
