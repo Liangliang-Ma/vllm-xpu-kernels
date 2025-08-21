@@ -32,7 +32,7 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
       "float epsilon) -> ()");
   ops.impl("fused_add_rms_norm", torch::kXPU, &fused_add_rms_norm);
 
-  ops.def("cutlass_sycl_demo(Tensor a) -> ()");
+  ops.def("cutlass_sycl_demo(Tensor! a) -> ()");
   ops.impl("cutlass_sycl_demo", torch::kXPU, &cutlass_sycl_demo);
 }
 
