@@ -12,14 +12,26 @@ DEVICE = "xpu"
 
 # shape for Llama-4-scout
 FUSED_MOE_MNK_FACTORS = [
-    (1, 5120, 8192),
-    (4, 5120, 8192),
-    (16, 5120, 8192),
+    # llama-4
+    (1, 8192, 5120),
+    (1, 16384, 5120),
+    (8192, 16384, 5120),
     (8192, 5120, 8192),
-]
-NUM_EXPERTS = [16]
-TOP_KS = [1]
+    # deepseek-R1
+    (1, 4096, 7168),
+    (1, 7168, 2048),
+    (8192, 4096, 7168),
+    (8192, 7168, 2048),
+    # qwen-3
+    (1, 3072, 4096),
+    (1, 4096, 1536),
+    (8192, 3072, 4096),
+    (8192, 4096, 1536)
 
+]
+NUM_EXPERTS = [16, 128]
+TOP_KS = [1]
+TP=[1,2,4]
 
 def random_partition(size_a: int, target: int):
     cuts = sorted(random.sample(range(target + size_a - 1), size_a - 1))
@@ -42,10 +54,17 @@ MINI_PYTEST_PARAMS = {
 @pytest.mark.parametrize("m,n,k", FUSED_MOE_MNK_FACTORS)
 @pytest.mark.parametrize("e", NUM_EXPERTS)
 @pytest.mark.parametrize("topk", TOP_KS)
+@pytest.mark.parametrize("tp", TP)
 @pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.parametrize("has_bias", [True, False])
-def test_grouped_gemm(m, n, k, e, topk, dtype, has_bias):
+@pytest.mark.parametrize("gemm1", [True, False])
+def test_grouped_gemm(m, n, k, e, topk, tp, dtype, has_bias, gemm1):
     seed_everything(7)
+    torch.xpu.empty_cache()
+    # if gemm1:
+    #     n = n//tp
+    # else: # gemm2
+    #     k = k//tp
     num_experts = e
     token_per_group = random_partition(e, m * topk)
     assert (len(token_per_group) == e)
@@ -82,12 +101,12 @@ def test_grouped_gemm(m, n, k, e, topk, dtype, has_bias):
         pre_token_sum += cur_token_num
     ref = torch.cat(ref, dim=0)
 
-    try:
-        torch.testing.assert_close(output, ref, rtol=1e-2, atol=1e-2)
-        print("a and b close enough")
-    except AssertionError as e:
-        print("a and b diffs")
-        print(e)
+    # try:
+    torch.testing.assert_close(output, ref, rtol=1e-2, atol=1e-2)
+    print("a and b close enough")
+    # except AssertionError as e:
+    #     print("a and b diffs")
+    #     print(e)
 
 
 def ref_fused_moe(x, w13, w13_bias, w2, w2_bias, flat_expert_weights,
@@ -186,3 +205,6 @@ def check_fused_moe(
     except AssertionError as e:
         print("a and b diffs")
         print(e)
+
+if __name__ == "__main__":
+    test_grouped_gemm(m=8192, n=16382, k=5120, e=16, topk=1, tp=4, dtype=torch.bfloat16, has_bias=True, gemm1=True)
