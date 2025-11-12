@@ -40,7 +40,6 @@ def cutlass_grouped_gemm(input_A, input_B, bias, output, expert_token_count, n,
         K=k,
         groups=num_experts)
 
-
 def ceilDiv(a, b):
     return (a + b - 1) // b
 
@@ -106,6 +105,9 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
     workspace = torch.zeros(map_offset,
                             dtype=torch.uint8,
                             device=hidden_states.device)
+    if topk_ids.dtype == torch.int32:
+        topk_ids = topk_ids.to(torch.int64)
+
     torch.ops._xpu_C.fused_moe(output=output,
                                input=hidden_states,
                                token_selected_experts=topk_ids,
@@ -126,10 +128,24 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
                             ws_map["overlapped_gemm1_gemm2_inputs"][1] +
                             permuted_data_size].view(hidden_states.dtype).view(
                                 num_moe_inputs, hidden_size)
+    # import ipdb
+    # ipdb.set_trace()
     # permuted_token_final_scales = workspace[
     #     ws_map["permuted_token_final_scales"][1]:
     #     ws_map["permuted_token_final_scales"][1] +
     #     permuted_token_final_scales_size].view(torch.float)
+
+    # expert_first_token_offset = torch.zeros_like(expert_first_token_offset)
+    # for i in range(2, 22):
+    #     expert_first_token_offset[i] = 2048
+    # for i in range(22, 24):
+    #     expert_first_token_offset[i] = 4096
+    # for i in range(24, 28):
+    #     expert_first_token_offset[i] = 4096 + 2048
+    # for i in range(28, 33):
+    #     expert_first_token_offset[i] = 4096 + 4096
+
+
     expert_token_count = (expert_first_token_offset[1:] -
                           expert_first_token_offset[:-1]).to(torch.int64)
     if w13_bias is None:
@@ -161,10 +177,15 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
         K=hidden_size,
         groups=num_experts_per_node)
 
+    print("$$$$$ker expert_first_token_offset: ", expert_first_token_offset)
+    print("$$$$$ker permuted_row_to_unpermuted_row: ", permuted_row_to_unpermuted_row[:10], permuted_row_to_unpermuted_row.shape)
     # act
     gate, up_ = torch.split(gemm1_output, inter_size, dim=1)
     act = torch.nn.SiLU()
     act_output = act(gate) * up_
+    # print("$$$$$ker gemm1:")
+    # for i in range(num_rows*4):
+    #     print(gate[i][:10])
 
     ########### gemm2 ##################
     input_A = act_output.contiguous()
@@ -172,6 +193,8 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
     gemm2_output = torch.empty((num_moe_inputs, hidden_size),
                                dtype=hidden_states.dtype,
                                device=hidden_states.device)
+
+
     torch.ops._xpu_C.cutlass_grouped_gemm(
         ptr_A=input_A,
         ptr_B=input_B,
@@ -183,6 +206,8 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
         K=inter_size,
         groups=num_experts_per_node)
 
+    # import ipdb
+    # ipdb.set_trace()
     expert_cache = output
 
     iter_for_weight_apply = expert_first_token_offset[1:]
@@ -193,13 +218,17 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
             continue
 
         exp_token_idxs = permuted_row_to_unpermuted_row[start_idx:end_idx]
-        scores_expert_ids = exp_token_idxs % num_rows
+        scores_token_ids = exp_token_idxs % num_rows
         scores_k_slot = exp_token_idxs // num_rows
-        scores = topk_weights[scores_expert_ids, scores_k_slot]
+        scores = topk_weights[scores_token_ids, scores_k_slot]
         expert_out = gemm2_output[start_idx:end_idx]
         expert_out.mul_(scores.view(-1, 1))
+        print("$$$$$ker expert_id: ", expert_id)
+        print("$$$$$ker scores: ", scores, scores.shape)
+        print("$$$$$ker expert_out: ", expert_out, expert_out.shape)
+        print("$$$$$ker scatter: ", scores_token_ids)
         expert_cache.scatter_reduce_(0,
-                                     scores_expert_ids.view(-1, 1).repeat(
+                                     scores_token_ids.view(-1, 1).repeat(
                                          1, hidden_size),
                                      expert_out,
                                      reduce='sum')

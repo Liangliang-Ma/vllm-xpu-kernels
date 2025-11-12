@@ -62,6 +62,7 @@ def test_grouped_gemm(m, n, k, e, topk, dtype, has_bias):
     else:
         bias = None
 
+    print("token_per_group: ", token_per_group, len(token_per_group))
     # output offset
     output = torch.empty((sum(token_per_group), n), dtype=dtype, device=DEVICE)
     cutlass_grouped_gemm(input_A, input_B, bias, output, token_per_group, n, k,
@@ -79,6 +80,12 @@ def test_grouped_gemm(m, n, k, e, topk, dtype, has_bias):
         if has_bias:
             expert_output += bias[i]
         ref.append(expert_output)
+        if i == 7:
+            print("@@@@@ref expert ", i, "out: ", expert_output)
+            print("$$$$$ker out: ", output[pre_token_sum:pre_token_sum + cur_token_num, :])
+
+            print("expert 7 input: ", hex(input.data_ptr()))
+            print("expert 7 weight: ", hex(weight.data_ptr()))
         pre_token_sum += cur_token_num
     ref = torch.cat(ref, dim=0)
 
@@ -96,14 +103,18 @@ def ref_fused_moe(x, w13, w13_bias, w2, w2_bias, flat_expert_weights,
     idxs = flat_expert_indices.argsort()
     counts = flat_expert_indices.bincount().cpu().numpy()
     tokens_per_expert = counts.cumsum()
+    print("@@@@ref tokens_per_expert: ", tokens_per_expert,
+          tokens_per_expert.shape)
     token_idxs = idxs // num_per_tok
+    debug = True
+    print("@@@@ref permuted_row_to_unpermuted_row: ", idxs[:10])
+    print("@@@@ref permuted_row_to_unpermuted_row: ", token_idxs[:10])
     for expert_id, end_idx in enumerate(tokens_per_expert):
         start_idx = 0 if expert_id == 0 else tokens_per_expert[expert_id - 1]
         if start_idx == end_idx:
             continue
         exp_token_idxs = token_idxs[start_idx:end_idx]
         expert_tokens = x[exp_token_idxs]
-
         expert_w13 = w13[expert_id, :, :]
         w1, w3 = torch.split(expert_w13,
                              int(list(expert_w13.shape)[0] / 2),
@@ -121,7 +132,20 @@ def ref_fused_moe(x, w13, w13_bias, w2, w2_bias, flat_expert_weights,
         expert_out = (gate * up) @ w2[expert_id, :, :].T
         if w2_bias is not None:
             expert_out += w2_bias[expert_id, :]
+        tmp = expert_out.clone()
         expert_out.mul_(flat_expert_weights[idxs[start_idx:end_idx]])
+        if debug:
+            print("@@@@ref expert id: ", expert_id)
+            # print("@@@@ref input: ", expert_tokens, expert_tokens.shape)
+            # print("@@@@ref w1: ", w1, w1.shape)
+            # print("@@@@ref gemm2 output: ", tmp, tmp.shape)
+            print("@@@@ref gemm1: ", gemm1[:,:10], gemm1.shape)
+            print("@@@@ref scores: ", flat_expert_weights[idxs[start_idx:end_idx]], flat_expert_weights[idxs[start_idx:end_idx]].shape)
+            print("@@@@ref apply output: ", expert_out, expert_out.shape)
+            print("@@@@ref scatter ids: ",
+                  exp_token_idxs)
+            # debug = False
+
         expert_cache.scatter_reduce_(0,
                                      exp_token_idxs.view(-1, 1).repeat(
                                          1, x.shape[-1]),
@@ -142,23 +166,36 @@ def check_fused_moe(
 ):
     seed_everything(7)
     # Setup test data
-    a = torch.randn((m, k), device=DEVICE, dtype=dtype) / 10
-    w13 = torch.randn((e, 2 * n, k), device=DEVICE, dtype=dtype) / 10
-    w2 = torch.randn((e, k, n), device=DEVICE, dtype=dtype) / 10
-    ref_a = a.clone()
-    if has_bias:
-        w13_bias = torch.randn(
-            (e, 2 * n), device=DEVICE, dtype=torch.float) / 10
-        w2_bias = torch.randn((e, k), device=DEVICE, dtype=torch.float) / 10
+    source = 0
+    if source == 0:
+        a = torch.randn((m, k), device=DEVICE, dtype=dtype) / 10
+        w13 = torch.randn((e, 2 * n, k), device=DEVICE, dtype=dtype) / 10
+        w2 = torch.randn((e, k, n), device=DEVICE, dtype=dtype) / 10
+        if has_bias:
+            w13_bias = torch.randn(
+                (e, 2 * n), device=DEVICE, dtype=torch.float) / 10
+            w2_bias = torch.randn((e, k), device=DEVICE, dtype=torch.float) / 10
+        else:
+            w13_bias = None
+            w2_bias = None
+        # moe gate
+        scores = torch.randn((m, e), device=DEVICE, dtype=dtype)
+        expert_scores, expert_indices = torch.topk(scores,
+                                                   k=topk,
+                                                   dim=-1,
+                                                   sorted=False)
     else:
-        w13_bias = None
-        w2_bias = None
-    # moe gate
-    scores = torch.randn((m, e), device=DEVICE, dtype=dtype)
-    expert_scores, expert_indices = torch.topk(scores,
-                                               k=topk,
-                                               dim=-1,
-                                               sorted=False)
+        a = torch.load("/home/mll/fusedMoE/dumped/tensor/hidden_states.pt")
+        w2 = torch.load("/home/mll/fusedMoE/dumped/tensor/w2.pt")
+        w13 = torch.load("/home/mll/fusedMoE/dumped/tensor/w13.pt")
+        expert_indices = torch.load("/home/mll/fusedMoE/dumped/tensor/topk_ids.pt")
+        w2_bias = torch.load("/home/mll/fusedMoE/dumped/tensor/w2_bias.pt")
+        w13_bias = torch.load("/home/mll/fusedMoE/dumped/tensor/w13_bias.pt")
+        expert_scores = torch.load("/home/mll/fusedMoE/dumped/tensor/topk_weights.pt")
+
+    ref_a = a.clone()
+    # import ipdb
+    # ipdb.set_trace()
 
     flat_expert_indices = expert_indices.view(-1)
     flat_expert_weights = expert_scores.view(-1, 1)
@@ -186,3 +223,21 @@ def check_fused_moe(
     except AssertionError as e:
         print("a and b diffs")
         print(e)
+
+
+if __name__ == "__main__":
+    # check_fused_moe(
+    #     m=4,
+    #     n=720,
+    #     k=2880,
+    #     e=32,
+    #     topk=4,
+    #     has_bias=True,
+    #     dtype=torch.bfloat16,
+    # )
+    # test_grouped_gemm(m=4, n=1440, k=2880, e=32, topk=4, dtype=torch.bfloat16, has_bias=True)
+    test_grouped_gemm(m=4, n=2880, k=720, e=32, topk=4, dtype=torch.bfloat16, has_bias=False)
+    # test_grouped_gemm(m=4, n=2880, k=2880, e=32, topk=4, dtype=torch.bfloat16, has_bias=True)
+    # test_grouped_gemm(m=4, n=2880, k=1440, e=32, topk=4, dtype=torch.bfloat16, has_bias=True)
+
+
