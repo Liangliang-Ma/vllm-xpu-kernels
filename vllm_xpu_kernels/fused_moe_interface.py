@@ -169,7 +169,7 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
     torch.ops._xpu_C.cutlass_grouped_gemm(
         ptr_A=gemm1_input,
         ptr_B=input_B,
-        ptr_bias=w13_bias,
+        ptr_bias=None,
         ptr_D=gemm1_output,
         expert_first_token_offset=expert_first_token_offset,
         expert_token_count=expert_token_count,
@@ -177,8 +177,9 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
         K=hidden_size,
         groups=num_experts_per_node)
 
-    print("$$$$$ker expert_first_token_offset: ", expert_first_token_offset)
-    print("$$$$$ker permuted_row_to_unpermuted_row: ", permuted_row_to_unpermuted_row[:10], permuted_row_to_unpermuted_row.shape)
+    gemm1_output += w13_bias
+    # print("$$$$$ker expert_first_token_offset: ", expert_first_token_offset)
+    # print("$$$$$ker permuted_row_to_unpermuted_row: ", permuted_row_to_unpermuted_row[:10], permuted_row_to_unpermuted_row.shape)
     # act
     gate, up_ = torch.split(gemm1_output, inter_size, dim=1)
     act = torch.nn.SiLU()
@@ -198,14 +199,14 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
     torch.ops._xpu_C.cutlass_grouped_gemm(
         ptr_A=input_A,
         ptr_B=input_B,
-        ptr_bias=w2_bias,
+        ptr_bias=None,
         ptr_D=gemm2_output,
         expert_first_token_offset=expert_first_token_offset,
         expert_token_count=expert_token_count,
         N=hidden_size,
         K=inter_size,
         groups=num_experts_per_node)
-
+    gemm2_output += w2_bias
     # import ipdb
     # ipdb.set_trace()
     expert_cache = output
@@ -223,10 +224,10 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
         scores = topk_weights[scores_token_ids, scores_k_slot]
         expert_out = gemm2_output[start_idx:end_idx]
         expert_out.mul_(scores.view(-1, 1))
-        print("$$$$$ker expert_id: ", expert_id)
-        print("$$$$$ker scores: ", scores, scores.shape)
-        print("$$$$$ker expert_out: ", expert_out, expert_out.shape)
-        print("$$$$$ker scatter: ", scores_token_ids)
+        # print("$$$$$ker expert_id: ", expert_id)
+        # print("$$$$$ker scores: ", scores, scores.shape)
+        # print("$$$$$ker expert_out: ", expert_out, expert_out.shape)
+        # print("$$$$$ker scatter: ", scores_token_ids)
         expert_cache.scatter_reduce_(0,
                                      scores_token_ids.view(-1, 1).repeat(
                                          1, hidden_size),

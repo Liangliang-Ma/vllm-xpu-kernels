@@ -226,17 +226,17 @@ def check_fused_moe(
 
 
 if __name__ == "__main__":
-    # check_fused_moe(
-    #     m=4,
-    #     n=720,
-    #     k=2880,
-    #     e=32,
-    #     topk=4,
-    #     has_bias=True,
-    #     dtype=torch.bfloat16,
-    # )
+    check_fused_moe(
+        m=4,
+        n=720,
+        k=2880,
+        e=32,
+        topk=4,
+        has_bias=True,
+        dtype=torch.bfloat16,
+    )
     # test_grouped_gemm(m=4, n=1440, k=2880, e=32, topk=4, dtype=torch.bfloat16, has_bias=True)
-    test_grouped_gemm(m=4, n=2880, k=720, e=32, topk=4, dtype=torch.bfloat16, has_bias=False)
+    # test_grouped_gemm(m=4, n=2880, k=720, e=32, topk=4, dtype=torch.bfloat16, has_bias=False)
     # test_grouped_gemm(m=4, n=2880, k=2880, e=32, topk=4, dtype=torch.bfloat16, has_bias=True)
     # test_grouped_gemm(m=4, n=2880, k=1440, e=32, topk=4, dtype=torch.bfloat16, has_bias=True)
 

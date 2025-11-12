@@ -285,7 +285,7 @@ struct CollectiveMma<MainloopMoE16Group<Stages, Schedule>, TileShape_,
     auto pAgA = thr_prefetch_A.partition_S(gA);
     auto pBgB = thr_prefetch_B.partition_S(gB);
 
-    if (cutlass::thread(0, 0)) {
+    if (false && cutlass::thread(0, 0)) {
       print("======================= A: \n");
       print("  gA : ");
       print(gA);
@@ -373,7 +373,7 @@ struct CollectiveMma<MainloopMoE16Group<Stages, Schedule>, TileShape_,
         reinterpret_cast<ElementB const*>(mainloop_params.ptr_B) +
         real_group * N * K;
 
-    if (true || cutlass::thread(0, 0)){
+    if (false && cutlass::thread(0, 0)){
       print("======================= in kernel: \n");
       print("next_group: "); print(next_group);
       print("\n");
