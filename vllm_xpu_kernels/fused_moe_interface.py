@@ -181,9 +181,18 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
     # print("$$$$$ker expert_first_token_offset: ", expert_first_token_offset)
     # print("$$$$$ker permuted_row_to_unpermuted_row: ", permuted_row_to_unpermuted_row[:10], permuted_row_to_unpermuted_row.shape)
     # act
-    gate, up_ = torch.split(gemm1_output, inter_size, dim=1)
-    act = torch.nn.SiLU()
-    act_output = act(gate) * up_
+    # gate, up_ = torch.split(gemm1_output, inter_size, dim=1)
+    # act = torch.nn.SiLU()
+    # act_output = act(gate) * up_ / 1.3
+    alpha = 1.702
+    limit = 7.0
+    gate, up = gemm1_output[..., ::2], gemm1_output[..., 1::2]
+    gate = gate.clamp(min=None, max=limit)
+    up = up.clamp(min=-limit, max=limit)
+    glu = gate * torch.sigmoid(gate * alpha)
+    act_output = (up + 1) * glu
+
+
     # print("$$$$$ker gemm1:")
     # for i in range(num_rows*4):
     #     print(gate[i][:10])

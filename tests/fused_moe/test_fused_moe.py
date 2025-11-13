@@ -106,7 +106,7 @@ def ref_fused_moe(x, w13, w13_bias, w2, w2_bias, flat_expert_weights,
     print("@@@@ref tokens_per_expert: ", tokens_per_expert,
           tokens_per_expert.shape)
     token_idxs = idxs // num_per_tok
-    debug = True
+    debug = False
     print("@@@@ref permuted_row_to_unpermuted_row: ", idxs[:10])
     print("@@@@ref permuted_row_to_unpermuted_row: ", token_idxs[:10])
     for expert_id, end_idx in enumerate(tokens_per_expert):
@@ -129,7 +129,7 @@ def ref_fused_moe(x, w13, w13_bias, w2, w2_bias, flat_expert_weights,
         up = expert_tokens @ w3.T
         if w13_bias is not None:
             up += w3_bias
-        expert_out = (gate * up) @ w2[expert_id, :, :].T
+        expert_out = (gate * up /1.3) @ w2[expert_id, :, :].T
         if w2_bias is not None:
             expert_out += w2_bias[expert_id, :]
         tmp = expert_out.clone()
@@ -166,7 +166,7 @@ def check_fused_moe(
 ):
     seed_everything(7)
     # Setup test data
-    source = 0
+    source = 1
     if source == 0:
         a = torch.randn((m, k), device=DEVICE, dtype=dtype) / 10
         w13 = torch.randn((e, 2 * n, k), device=DEVICE, dtype=dtype) / 10
@@ -185,17 +185,18 @@ def check_fused_moe(
                                                    dim=-1,
                                                    sorted=False)
     else:
-        a = torch.load("/home/mll/fusedMoE/dumped/tensor/hidden_states.pt")
-        w2 = torch.load("/home/mll/fusedMoE/dumped/tensor/w2.pt")
-        w13 = torch.load("/home/mll/fusedMoE/dumped/tensor/w13.pt")
-        expert_indices = torch.load("/home/mll/fusedMoE/dumped/tensor/topk_ids.pt")
-        w2_bias = torch.load("/home/mll/fusedMoE/dumped/tensor/w2_bias.pt")
-        w13_bias = torch.load("/home/mll/fusedMoE/dumped/tensor/w13_bias.pt")
-        expert_scores = torch.load("/home/mll/fusedMoE/dumped/tensor/topk_weights.pt")
-
+        a = torch.load("/home/mll/mirror/dump/hidden_states.pt")
+        w2 = torch.load("/home/mll/mirror/dump/w2.pt")
+        w13 = torch.load("/home/mll/mirror/dump/w13.pt")
+        expert_indices = torch.load("/home/mll/mirror/dump/topk_ids.pt")
+        w2_bias = torch.load("/home/mll/mirror/dump/w2_bias.pt")
+        w13_bias = torch.load("/home/mll/mirror/dump/w13_bias.pt")
+        expert_scores = torch.load("/home/mll/mirror/dump/topk_weights.pt")
+        tri_out = torch.load("/home/mll/mirror/dump/tri_out.pt")
+        dker_out = torch.load("/home/mll/mirror/dump/xpu_out.pt")
     ref_a = a.clone()
-    # import ipdb
-    # ipdb.set_trace()
+    import ipdb
+    ipdb.set_trace()
 
     flat_expert_indices = expert_indices.view(-1)
     flat_expert_weights = expert_scores.view(-1, 1)
@@ -217,6 +218,10 @@ def check_fused_moe(
 
     print("ref result", ref_out, ref_out.shape)
     print("kernel result", output, output.shape)
+    print("docker kernel result", dker_out, dker_out.shape)
+    print("triton result:", tri_out, tri_out.shape)
+
+    print((ref_out - output).max())
     try:
         torch.testing.assert_close(output, ref_out, rtol=1e-2, atol=1e-2)
         print("a and b close enough")
@@ -227,7 +232,7 @@ def check_fused_moe(
 
 if __name__ == "__main__":
     check_fused_moe(
-        m=4,
+        m=8192,
         n=720,
         k=2880,
         e=32,
