@@ -3,6 +3,7 @@ import torch
 
 try:
     from . import _xpu_C  # noqa: F401
+    from . import _C
     FUSEDMOE_UNAVAILABLE_REASON = None
     FUSEDMOE_AVAILABLE = True
 except ImportError as e:
@@ -56,6 +57,15 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
                   topk_ids, n_experts_per_token, activation, num_experts):
 
     output = torch.zeros_like(hidden_states)
+    if w13.is_contiguous():
+        # transpose once and replace original data
+        w13.data = w13.transpose(-1, -2).contiguous().transpose(-1, -2)
+        w2.data = w2.transpose(-1, -2).contiguous().transpose(-1, -2)
+        print("onece@@@@@@@@@@@@@")
+    # w13 = w13.transpose(-1, -2).contiguous().transpose(-1, -2)
+    # w2 = w2.transpose(-1, -2).contiguous().transpose(-1, -2)
+
+
 
     # TODO: will all integrated in Cpp func. Temporary expose before gemm fusion
     num_rows, hidden_size = list(hidden_states.shape)
@@ -164,12 +174,12 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
                                device=hidden_states.device)
 
     ########### gemm1 ##################
-    input_B = w13.transpose(-1, -2).contiguous().transpose(-1, -2)
+    input_B = w13
 
     torch.ops._xpu_C.cutlass_grouped_gemm(
         ptr_A=gemm1_input,
         ptr_B=input_B,
-        ptr_bias=None,
+        ptr_bias=w13_bias,
         ptr_D=gemm1_output,
         expert_first_token_offset=expert_first_token_offset,
         expert_token_count=expert_token_count,
@@ -177,21 +187,29 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
         K=hidden_size,
         groups=num_experts_per_node)
 
-    gemm1_output += w13_bias
+    # gemm1_output += w13_bias
     # print("$$$$$ker expert_first_token_offset: ", expert_first_token_offset)
     # print("$$$$$ker permuted_row_to_unpermuted_row: ", permuted_row_to_unpermuted_row[:10], permuted_row_to_unpermuted_row.shape)
     # act
     # gate, up_ = torch.split(gemm1_output, inter_size, dim=1)
     # act = torch.nn.SiLU()
     # act_output = act(gate) * up_ / 1.3
-    alpha = 1.702
-    limit = 7.0
-    gate, up = gemm1_output[..., ::2], gemm1_output[..., 1::2]
-    gate = gate.clamp(min=None, max=limit)
-    up = up.clamp(min=-limit, max=limit)
-    glu = gate * torch.sigmoid(gate * alpha)
-    act_output = (up + 1) * glu
-
+    # alpha = 1.702
+    # limit = 7.0
+    # gate, up = gemm1_output[..., ::2], gemm1_output[..., 1::2]
+    # gate = gate.clamp(min=None, max=limit)
+    # up = up.clamp(min=-limit, max=limit)
+    # glu = gate * torch.sigmoid(gate * alpha)
+    # act_output = (up + 1) * glu
+    act_output = torch.empty((num_moe_inputs, inter_size), dtype=gemm1_output.dtype, device=gemm1_output.device)
+    if activation == "silu":
+        torch.ops._C.silu_and_mul(act_output, gemm1_output)
+    elif activation == "gelu":
+        torch.ops._C.gelu_and_mul(act_output, gemm1_output)
+    elif activation == "swigluoai":
+        torch.ops._C.swigluoai_and_mul(act_output, gemm1_output, 1.702, 7.0)
+    else:
+        raise ValueError(f"Unsupported FusedMoe activation: {activation}.")
 
     # print("$$$$$ker gemm1:")
     # for i in range(num_rows*4):
@@ -199,7 +217,7 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
 
     ########### gemm2 ##################
     input_A = act_output.contiguous()
-    input_B = w2.transpose(-1, -2).contiguous().transpose(-1, -2)
+    input_B = w2
     gemm2_output = torch.empty((num_moe_inputs, hidden_size),
                                dtype=hidden_states.dtype,
                                device=hidden_states.device)
@@ -208,14 +226,14 @@ def xpu_fused_moe(hidden_states, w13, w13_bias, w2, w2_bias, topk_weights,
     torch.ops._xpu_C.cutlass_grouped_gemm(
         ptr_A=input_A,
         ptr_B=input_B,
-        ptr_bias=None,
+        ptr_bias=w2_bias,
         ptr_D=gemm2_output,
         expert_first_token_offset=expert_first_token_offset,
         expert_token_count=expert_token_count,
         N=hidden_size,
         K=inter_size,
         groups=num_experts_per_node)
-    gemm2_output += w2_bias
+    # gemm2_output += w2_bias
     # import ipdb
     # ipdb.set_trace()
     expert_cache = output

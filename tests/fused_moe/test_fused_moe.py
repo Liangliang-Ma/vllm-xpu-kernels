@@ -129,7 +129,7 @@ def ref_fused_moe(x, w13, w13_bias, w2, w2_bias, flat_expert_weights,
         up = expert_tokens @ w3.T
         if w13_bias is not None:
             up += w3_bias
-        expert_out = (gate * up /1.3) @ w2[expert_id, :, :].T
+        expert_out = (gate * up) @ w2[expert_id, :, :].T
         if w2_bias is not None:
             expert_out += w2_bias[expert_id, :]
         tmp = expert_out.clone()
@@ -195,8 +195,8 @@ def check_fused_moe(
         tri_out = torch.load("/home/mll/mirror/dump/tri_out.pt")
         dker_out = torch.load("/home/mll/mirror/dump/xpu_out.pt")
     ref_a = a.clone()
-    import ipdb
-    ipdb.set_trace()
+    # import ipdb
+    # ipdb.set_trace()
 
     flat_expert_indices = expert_indices.view(-1)
     flat_expert_weights = expert_scores.view(-1, 1)
@@ -218,16 +218,45 @@ def check_fused_moe(
 
     print("ref result", ref_out, ref_out.shape)
     print("kernel result", output, output.shape)
-    print("docker kernel result", dker_out, dker_out.shape)
-    print("triton result:", tri_out, tri_out.shape)
+    # print("docker kernel result", dker_out, dker_out.shape)
+    # print("triton result:", tri_out, tri_out.shape)
 
-    print((ref_out - output).max())
+    # print((tri_out - output).max())
     try:
         torch.testing.assert_close(output, ref_out, rtol=1e-2, atol=1e-2)
         print("a and b close enough")
     except AssertionError as e:
         print("a and b diffs")
         print(e)
+
+    output = xpu_fused_moe(hidden_states=a,
+                           w13=w13,
+                           w13_bias=w13_bias,
+                           w2=w2,
+                           w2_bias=w2_bias,
+                           topk_weights=expert_scores,
+                           topk_ids=expert_indices,
+                           n_experts_per_token=topk,
+                           activation="silu",
+                           num_experts=e)
+
+    ref_out = ref_fused_moe(ref_a, w13, w13_bias, w2, w2_bias,
+                            flat_expert_weights, flat_expert_indices, topk,
+                            "silu", e)
+
+    print("ref result", ref_out, ref_out.shape)
+    print("kernel result", output, output.shape)
+    # print("docker kernel result", dker_out, dker_out.shape)
+    # print("triton result:", tri_out, tri_out.shape)
+
+    # print((tri_out - output).max())
+    try:
+        torch.testing.assert_close(output, ref_out, rtol=1e-2, atol=1e-2)
+        print("a and b close enough")
+    except AssertionError as e:
+        print("a and b diffs")
+        print(e)
+
 
 
 if __name__ == "__main__":
