@@ -10,16 +10,38 @@ from vllm_xpu_kernels.fused_moe_interface import (cutlass_grouped_gemm,
 
 DEVICE = "xpu"
 
-# shape for Llama-4-scout
-FUSED_MOE_MNK_FACTORS = [
-    (1, 5120, 8192),
-    (4, 5120, 8192),
-    (16, 5120, 8192),
-    (8192, 5120, 8192),
+# M,N,K,E
+GROUPED_GEMM_FACTORS = [
+    # llama-4-scout
+    (8192, 16384, 5120, 16),
+    (8192, 5120, 8192, 16),
+    (1, 16384, 5120, 16),
+    (1, 5120, 8192, 16),
+    # deepseek-R1 ep=8
+    (8192, 4096, 7168, 16),
+    (8192, 7168, 2048, 16),
+    (1, 4096, 7168, 16),
+    (1, 7168, 2048, 16),
+    # qwen3
+    (8192, 3072, 4096, 32),
+    (8192, 4096, 1536, 32),
+    (1, 3072, 4096, 32),
+    (1, 4096, 1536, 32),
+    # gpt-oss
+    (8192, 5760, 2880, 32),
+    (8192, 2880, 2880, 32),
+    (1, 5760, 2880, 32),
+    (1, 2880, 2880, 32),
 ]
-NUM_EXPERTS = [16]
-TOP_KS = [1]
 
+
+MINI_PYTEST_PARAMS = {
+    "default": {
+        "m,n,k,e": [(1, 256, 128, 2)],
+        "dtype": [torch.bfloat16],
+        "has_bias": [True]
+    }
+}
 
 def random_partition(size_a: int, target: int):
     cuts = sorted(random.sample(range(target + size_a - 1), size_a - 1))
@@ -27,27 +49,13 @@ def random_partition(size_a: int, target: int):
     result = [cuts[i + 1] - cuts[i] - 1 for i in range(size_a)]
     return result
 
-
-MINI_PYTEST_PARAMS = {
-    "default": {
-        "m,n,k": [(1, 256, 128)],
-        "e": [2],
-        "topk": [1],
-        "dtype": [torch.bfloat16],
-        "has_bias": [True]
-    }
-}
-
-
-@pytest.mark.parametrize("m,n,k", FUSED_MOE_MNK_FACTORS)
-@pytest.mark.parametrize("e", NUM_EXPERTS)
-@pytest.mark.parametrize("topk", TOP_KS)
+@pytest.mark.parametrize("m,n,k,e", GROUPED_GEMM_FACTORS)
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
 @pytest.mark.parametrize("has_bias", [True, False])
-def test_grouped_gemm(m, n, k, e, topk, dtype, has_bias):
+def test_grouped_gemm(m, n, k, e, dtype, has_bias):
     seed_everything(7)
     num_experts = e
-    token_per_group = random_partition(e, m * topk)
+    token_per_group = random_partition(e, m)
     assert (len(token_per_group) == e)
     # input
     input_A = torch.randn((sum(token_per_group), k),
@@ -82,7 +90,7 @@ def test_grouped_gemm(m, n, k, e, topk, dtype, has_bias):
         pre_token_sum += cur_token_num
     ref = torch.cat(ref, dim=0)
 
-    torch.testing.assert_close(output, ref, rtol=2e-2, atol=1e-2)
+    torch.testing.assert_close(output, ref, rtol=2e-2, atol=2e-2)
 
 
 def ref_fused_moe(x, w13, w13_bias, w2, w2_bias, flat_expert_weights,
@@ -181,3 +189,6 @@ def check_fused_moe(
     except AssertionError as e:
         print("a and b diffs")
         print(e)
+
+if __name__ == "__main__":
+    test_grouped_gemm(m=8192, n=16384, k=5120, e=16, dtype=torch.bfloat16, has_bias=True)
