@@ -20,6 +20,8 @@ FUSED_MOE_MNK_FACTORS = [
 NUM_EXPERTS = [16]
 TOP_KS = [1]
 
+def ceil_div(a, b):
+    return (a + b - 1) // b
 
 def random_partition(size_a: int, target: int):
     cuts = sorted(random.sample(range(target + size_a - 1), size_a - 1))
@@ -83,6 +85,36 @@ def test_grouped_gemm(m, n, k, e, topk, dtype, has_bias):
     ref = torch.cat(ref, dim=0)
 
     torch.testing.assert_close(output, ref, rtol=2e-2, atol=1e-2)
+
+def test_grouped_gemm_mxfp(m, n, k, e, topk, dtype):
+    seed_everything(7)
+    num_experts = e
+    token_per_group = random_partition(e, m * topk)
+    assert (len(token_per_group) == e)
+
+    BLOCK_SIZE = 32
+    m = sum(token_per_group)
+    A_ref = torch.randint(0, 255, (m, k), device=DEVICE, dtype=torch.uint8).view(torch.float8_e4m3fn).to(torch.bfloat16)
+    B_ref = torch.randint(0, 255, (num_experts, k, n), device=DEVICE, dtype=torch.uint8).view(torch.float8_e4m3fn).to(torch.bfloat16)
+    # modification: don't allow NaN values
+    A_ref[torch.isnan(A_ref)] = 0
+    B_ref[torch.isnan(B_ref)] = 0
+    A = A_ref.to(torch.float8_e4m3fn)
+    B = B_ref.to(torch.float8_e4m3fn)
+    A_scale = torch.full((m, ceil_div(k, BLOCK_SIZE)), 1.0, device=DEVICE, dtype=torch.float8_e8m0fnu)
+    B_scale = torch.full((n, ceil_div(k, BLOCK_SIZE)), 1.0, device=DEVICE, dtype=torch.float8_e8m0fnu)
+    bias = None
+
+    # output offset
+    output = torch.empty((m, n), dtype=torch.float32, device=DEVICE)
+    cutlass_grouped_gemm(A,
+                         A_scale,
+                         B,
+                         B_scale,
+                         bias,
+                         output,
+                         token_per_group,
+                         n, k, num_experts)
 
 
 def ref_fused_moe(x, w13, w13_bias, w2, w2_bias, flat_expert_weights,
@@ -181,3 +213,6 @@ def check_fused_moe(
     except AssertionError as e:
         print("a and b diffs")
         print(e)
+
+if __name__ == "__main__":
+    test_grouped_gemm_mxfp(m=16, n=2048, k=1024, e=16, topk=2, dtype=torch.float8_e4m3fn)

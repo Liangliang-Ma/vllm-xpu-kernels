@@ -220,7 +220,9 @@ template <class moe_policy>
 void kernel_functor(
     sycl::queue& stream,
     void* ptr_A,
+    void* ptr_A_scale,
     void* ptr_B,
+    void* ptr_B_scale,
     void* ptr_bias,
     void* ptr_D,
     void* expert_first_token_offset,
@@ -263,7 +265,7 @@ void kernel_functor(
                                 // Note: This shape
                                 // has to match the shape used for
                                 //  the scaling factors
-  using MMAOperation = moe_policy::MMAOperation;
+  using MMAOperation = typename moe_policy::MMAOperation;
 
   using TiledMma = typename TiledMMAHelper<
       MMA_Atom<XE_DPAS_TT<8, ElementAccumulator, ElementA>>,
@@ -344,7 +346,9 @@ void kernel_functor(
 template void kernel_functor<moe_bf16_policy>(
     sycl::queue& stream,
     void* ptr_A,
+    void* ptr_A_scale,
     void* ptr_B,
+    void* ptr_B_scale,
     void* ptr_bias,
     void* ptr_D,
     void* expert_first_token_offset,
@@ -354,7 +358,21 @@ template void kernel_functor<moe_bf16_policy>(
 template void kernel_functor<moe_fp16_policy>(
     sycl::queue& stream,
     void* ptr_A,
+    void* ptr_A_scale,
     void* ptr_B,
+    void* ptr_B_scale,
+    void* ptr_bias,
+    void* ptr_D,
+    void* expert_first_token_offset,
+    int64_t N,
+    int64_t K,
+    int64_t groups);
+template void kernel_functor<moe_mxfp8_policy>(
+    sycl::queue& stream,
+    void* ptr_A,
+    void* ptr_A_scale,
+    void* ptr_B,
+    void* ptr_B_scale,
     void* ptr_bias,
     void* ptr_D,
     void* expert_first_token_offset,

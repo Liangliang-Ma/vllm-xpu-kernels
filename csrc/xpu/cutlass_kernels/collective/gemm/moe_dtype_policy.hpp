@@ -35,5 +35,14 @@ class moe_fp16_policy : public moe_policy_base {
   using MMAOperation = cute::XE_8x16x16_F32F16F16F32_TT;
 };
 
+class moe_mxfp8_policy : public moe_policy_base {
+ public:
+  using ElementA = cutlass::half_t;
+  using ElementB = cutlass::half_t;
+  using ElementOutput = cutlass::half_t;
+  using ElementScale = cutlass::half_t;
+  using MMAOperation = cute::XE_8x16x16_F32F16F16F32_TT;
+};
+
 }  // namespace grouped_gemm
 }  // namespace gpu::cutlass_kernel

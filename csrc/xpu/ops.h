@@ -35,7 +35,9 @@ torch::Tensor int4_gemm_w4a16(
 
 torch::Tensor cutlass_grouped_gemm(
     torch::Tensor ptr_A,
+    torch::Tensor ptr_A_scale,
     torch::Tensor ptr_B,
+    torch::Tensor ptr_B_scale,
     const c10::optional<at::Tensor>& ptr_bias,
     torch::Tensor ptr_D,
     torch::Tensor expert_first_token_offset,

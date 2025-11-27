@@ -19,7 +19,9 @@ template <class moe_policy>
 void kernel_functor(
     sycl::queue& stream,
     void* ptr_A,
+    void* ptr_A_scale,
     void* ptr_B,
+    void* ptr_B_scale,
     void* ptr_bias,
     void* ptr_D,
     void* expert_first_token_offset,
@@ -29,7 +31,9 @@ void kernel_functor(
 extern template void kernel_functor<moe_bf16_policy>(
     sycl::queue& stream,
     void* ptr_A,
+    void* ptr_A_scale,
     void* ptr_B,
+    void* ptr_B_scale,
     void* ptr_bias,
     void* ptr_D,
     void* expert_first_token_offset,
@@ -39,20 +43,37 @@ extern template void kernel_functor<moe_bf16_policy>(
 extern template void kernel_functor<moe_fp16_policy>(
     sycl::queue& stream,
     void* ptr_A,
+    void* ptr_A_scale,
     void* ptr_B,
+    void* ptr_B_scale,
     void* ptr_bias,
     void* ptr_D,
     void* expert_first_token_offset,
     int64_t N,
     int64_t K,
     int64_t groups);
+extern template void kernel_functor<moe_mxfp8_policy>(
+    sycl::queue& stream,
+    void* ptr_A,
+    void* ptr_A_scale,
+    void* ptr_B,
+    void* ptr_B_scale,
+    void* ptr_bias,
+    void* ptr_D,
+    void* expert_first_token_offset,
+    int64_t N,
+    int64_t K,
+    int64_t groups);
+
 }  // namespace grouped_gemm
 
 /* gemm2(group_A, w2, output, offset) */
 
 at::Tensor grouped_gemm_func(
     at::Tensor& ptr_A,
+    at::Tensor& ptr_A_scale,
     at::Tensor& ptr_B,
+    at::Tensor& ptr_B_scale,
     const c10::optional<at::Tensor>& ptr_bias,
     at::Tensor& ptr_D,
     at::Tensor& expert_first_token_offset,
@@ -67,7 +88,9 @@ at::Tensor grouped_gemm_func(
     grouped_gemm::kernel_functor<moe_policy>(
         dpcpp_queue,
         ptr_A.data_ptr(),
+        nullptr,
         ptr_B.data_ptr(),
+        nullptr,
         ptr_bias.has_value() ? ptr_bias->data_ptr() : nullptr,
         ptr_D.data_ptr(),
         expert_first_token_offset.data_ptr(),
@@ -79,7 +102,23 @@ at::Tensor grouped_gemm_func(
     grouped_gemm::kernel_functor<moe_policy>(
         dpcpp_queue,
         ptr_A.data_ptr(),
+        nullptr,
         ptr_B.data_ptr(),
+        nullptr,
+        ptr_bias.has_value() ? ptr_bias->data_ptr() : nullptr,
+        ptr_D.data_ptr(),
+        expert_first_token_offset.data_ptr(),
+        N,
+        K,
+        groups);
+  } else if (A_dtype == at::kFloat8_e4m3fn && ptr_A_scale.dtype() == at::kFloat8_e8m0fnu) {
+    using moe_policy = grouped_gemm::moe_mxfp8_policy;
+    grouped_gemm::kernel_functor<moe_policy>(
+        dpcpp_queue,
+        ptr_A.data_ptr(),
+        ptr_A_scale.data_ptr(),
+        ptr_B.data_ptr(),
+        ptr_B_scale.data_ptr(),
         ptr_bias.has_value() ? ptr_bias->data_ptr() : nullptr,
         ptr_D.data_ptr(),
         expert_first_token_offset.data_ptr(),

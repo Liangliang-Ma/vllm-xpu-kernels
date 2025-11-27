@@ -11,7 +11,7 @@ except ImportError as e:
     FUSEDMOE_AVAILABLE = False
 
 
-def cutlass_grouped_gemm(input_A, input_B, bias, output, expert_token_count, n,
+def cutlass_grouped_gemm(input_A, input_A_scale, input_B, input_B_scale, bias, output, expert_token_count, n,
                          k, num_experts):
     expert_token_count_ = torch.tensor(expert_token_count,
                                        dtype=torch.int64,
@@ -29,15 +29,17 @@ def cutlass_grouped_gemm(input_A, input_B, bias, output, expert_token_count, n,
     expert_offset = torch.tensor(exclusive_prefix_sum(expert_token_count),
                                  dtype=torch.int64,
                                  device="xpu")
-    torch.ops._xpu_C.cutlass_grouped_gemm(
-        ptr_A=input_A,
-        ptr_B=input_B,
-        ptr_bias=bias,
-        ptr_D=output,
-        expert_first_token_offset=expert_offset,
-        N=n,
-        K=k,
-        groups=num_experts)
+    # torch.ops._xpu_C.cutlass_grouped_gemm(
+    #     ptr_A=input_A,
+    #     ptr_A_scale=input_A_scale,
+    #     ptr_B=input_B,
+    #     ptr_B_scale=input_B_scale,
+    #     ptr_bias=bias,
+    #     ptr_D=output,
+    #     expert_first_token_offset=expert_offset,
+    #     N=n,
+    #     K=k,
+    #     groups=num_experts)
 
 
 def ceilDiv(a, b):
