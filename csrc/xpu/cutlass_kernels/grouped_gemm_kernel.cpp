@@ -126,6 +126,7 @@ struct GroupedGemmRunner {
   using ElementA = typename Gemm::ElementA;
   using ElementB = typename Gemm::ElementB;
   using ElementC = typename Gemm::ElementC;
+  using ElementScale = typename Gemm::ElementScale;
 
   using CollectiveEpilogue = typename Gemm::CollectiveEpilogue;
   using ElementOutput = typename Gemm::ElementA;
@@ -136,7 +137,9 @@ struct GroupedGemmRunner {
       const cutlass::KernelHardwareInfo& hw_info,
       int64_t const* expert_first_token_offset,
       const ElementA* ptr_A,
+      const ElementScale* ptr_A_scale,
       const ElementB* ptr_B,
+      const ElementScale* ptr_B_scale,
       const ElementC* ptr_C,
       ElementOutput* ptr_D,
       int64_t N,
@@ -161,7 +164,8 @@ struct GroupedGemmRunner {
 
     bool has_bias = ptr_C ? true : false;
     // Per-GEMM problem shape info may only exist on the device.
-    arguments = typename Gemm::Arguments{
+    if (!ptr_A_scale){
+      arguments = typename Gemm::Arguments{
         cutlass::gemm::GemmUniversalMode::kGrouped,
         {ptr_A,
          ptr_B,
@@ -174,7 +178,7 @@ struct GroupedGemmRunner {
         groups,
         hw_info,
         {1, RasterOrderOptions::AlongN}};
-
+    }
     return arguments;
   }
 
@@ -183,7 +187,9 @@ struct GroupedGemmRunner {
       const cutlass::KernelHardwareInfo& hw_info,
       int64_t const* expert_first_token_offset,
       const ElementA* ptr_A,
+      const ElementScale* ptr_A_scale,
       const ElementB* ptr_B,
+      const ElementScale* ptr_B_scale,
       const ElementC* ptr_C,
       ElementOutput* ptr_D,
       int64_t N,
@@ -195,7 +201,9 @@ struct GroupedGemmRunner {
         hw_info,
         expert_first_token_offset,
         ptr_A,
+        ptr_A_scale,
         ptr_B,
+        ptr_B_scale,
         ptr_C,
         ptr_D,
         N,
@@ -244,99 +252,18 @@ void kernel_functor(
       cutlass::KernelHardwareInfo::query_device_multiprocessor_count(
           hw_info.device_id);
 
-  using ElementAccumulator = typename moe_policy::ElementAccumulator;
-  using ElementComputeEpilogue = typename moe_policy::ElementComputeEpilogue;
-  using ElementA = typename moe_policy::ElementA;
-  using ElementB = typename moe_policy::ElementB;
-  using ElementOutput = typename moe_policy::ElementOutput;
-  using ElementScale = typename moe_policy::ElementScale;
-
-  using LayoutA = cutlass::layout::RowMajor;
-  using LayoutB = cutlass::layout::RowMajor;
-  using LayoutC = cutlass::layout::RowMajor;
-  using LayoutD = cutlass::layout::RowMajor;
-
-  using TileShape = Shape<_256, _256, _32>;
-  using GmemTiledCopyA = void;  // XE_LOAD_2D<16, 32, 32>;
-                                // Note: This
-                                // shape has to match the shape used for
-                                //  the scaling factors
-  using GmemTiledCopyB = void;  // XE_LOAD_2D_VNNI<16, 32, 32>;
-                                // Note: This shape
-                                // has to match the shape used for
-                                //  the scaling factors
-  using MMAOperation = typename moe_policy::MMAOperation;
-
-  using TiledMma = typename TiledMMAHelper<
-      MMA_Atom<XE_DPAS_TT<8, ElementAccumulator, ElementA>>,
-      Layout<TileShape>,
-      Layout<Shape<_8, _4, _1>, Stride<_4, _1, _0>>>::TiledMMA;
-
-  constexpr int PipelineStages = 2;
-  using GEMMDispatchPolicy = cutlass::gemm::MainloopMoE16Group<PipelineStages>;
-  using EpilogueDispatchPolicy = cutlass::epilogue::MoE16Group;
-  using EpilogueOp = cutlass::epilogue::fusion::LinearCombination<
-      float_t,
-      float_t,
-      float_t,
-      float_t,
-      cutlass::FloatRoundStyle::round_to_nearest>;
-
-  using FusionCallbacks = cutlass::epilogue::fusion::FusionCallbacks<
-      EpilogueDispatchPolicy,
-      EpilogueOp,
-      TileShape,
-      decltype(tile_shape(TiledMma()))>;
-  using CollectiveEpilogue = cutlass::epilogue::collective::CollectiveEpilogue<
-      EpilogueDispatchPolicy,
-      TileShape,
-      ElementAccumulator,
-      cutlass::detail::TagToStrideC_t<LayoutC*>,
-      ElementOutput,
-      cutlass::detail::TagToStrideC_t<LayoutD*>,
-      FusionCallbacks,
-      XE_2D_U32x8x16_LD_N,
-      void,
-      void,
-      XE_2D_U16x8x16_ST_N,
-      void,
-      void>;
-
-  // Mainloop
-  using CollectiveMainloop = cutlass::gemm::collective::CollectiveMma<
-      GEMMDispatchPolicy,
-      TileShape,
-      ElementA,
-      cutlass::gemm::TagToStrideA_t<LayoutA>,
-      ElementB,
-      cutlass::gemm::TagToStrideB_t<LayoutB>,
-      TiledMma,
-      GmemTiledCopyA,
-      void,
-      void,
-      cute::identity,  // A
-      GmemTiledCopyB,
-      void,
-      void,
-      cute::identity  // B
-      >;
-
-  using GemmKernel = cutlass::gemm::kernel::GemmUniversal<
-      ProblemShape,
-      CollectiveMainloop,
-      CollectiveEpilogue,
-      cutlass::gemm::GroupScheduler>;
-
-  using Gemm = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel>;
+  using Gemm = typename moe_policy::Gemm;
 
   GroupedGemmRunner<Gemm> runner;
   runner.run(
       stream,
       hw_info,
       reinterpret_cast<const int64_t*>(expert_first_token_offset),
-      reinterpret_cast<const ElementA*>(ptr_A),
-      reinterpret_cast<const ElementB*>(ptr_B),
-      reinterpret_cast<const ElementAccumulator*>(ptr_bias),
+      reinterpret_cast<const typename Gemm::ElementA*>(ptr_A),
+      reinterpret_cast<const typename Gemm::ElementScale*>(ptr_A_scale),
+      reinterpret_cast<const typename Gemm::ElementB*>(ptr_B),
+      reinterpret_cast<const typename Gemm::ElementScale*>(ptr_B_scale),
+      reinterpret_cast<const typename Gemm::ElementAccumulator*>(ptr_bias),
       reinterpret_cast<ElementOutput*>(ptr_D),
       N,
       K,

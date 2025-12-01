@@ -86,7 +86,7 @@ def test_grouped_gemm(m, n, k, e, topk, dtype, has_bias):
 
     torch.testing.assert_close(output, ref, rtol=2e-2, atol=1e-2)
 
-def test_grouped_gemm_mxfp(m, n, k, e, topk, dtype):
+def run_grouped_gemm_mxfp(m, n, k, e, topk, dtype):
     seed_everything(7)
     num_experts = e
     token_per_group = random_partition(e, m * topk)
@@ -215,4 +215,4 @@ def check_fused_moe(
         print(e)
 
 if __name__ == "__main__":
-    test_grouped_gemm_mxfp(m=16, n=2048, k=1024, e=16, topk=2, dtype=torch.float8_e4m3fn)
+    run_grouped_gemm_mxfp(m=16, n=2048, k=1024, e=16, topk=2, dtype=torch.float8_e4m3fn)
