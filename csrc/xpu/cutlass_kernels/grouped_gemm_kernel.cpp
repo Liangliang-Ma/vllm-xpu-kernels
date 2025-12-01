@@ -126,7 +126,7 @@ struct GroupedGemmRunner {
   using ElementA = typename Gemm::ElementA;
   using ElementB = typename Gemm::ElementB;
   using ElementC = typename Gemm::ElementC;
-  using ElementScale = typename Gemm::ElementScale;
+  using ElementScale = cutlass::half_t; //typename Gemm::ElementScale;
 
   using CollectiveEpilogue = typename Gemm::CollectiveEpilogue;
   using ElementOutput = typename Gemm::ElementA;
@@ -260,11 +260,11 @@ void kernel_functor(
       hw_info,
       reinterpret_cast<const int64_t*>(expert_first_token_offset),
       reinterpret_cast<const typename Gemm::ElementA*>(ptr_A),
-      reinterpret_cast<const typename Gemm::ElementScale*>(ptr_A_scale),
+      reinterpret_cast<const typename cutlass::half_t*>(ptr_A_scale),
       reinterpret_cast<const typename Gemm::ElementB*>(ptr_B),
-      reinterpret_cast<const typename Gemm::ElementScale*>(ptr_B_scale),
+      reinterpret_cast<const typename cutlass::half_t*>(ptr_B_scale),
       reinterpret_cast<const typename Gemm::ElementAccumulator*>(ptr_bias),
-      reinterpret_cast<ElementOutput*>(ptr_D),
+      reinterpret_cast<typename Gemm::ElementA*>(ptr_D),
       N,
       K,
       groups);
